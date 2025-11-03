@@ -63,3 +63,68 @@ Frontend (Cliente)
     Estado Global: React Context API (para Autenticación)
 
     Utilidades: jwt-decode
+
+
+
+    Guía de Ejecución Resumida
+
+1. Backend (Terminal 1)
+
+    Navegar a la carpeta:
+    Bash
+
+cd acme-trans-backend
+
+Crear y activar entorno virtual:
+Bash
+
+python -m venv venv
+.\venv\Scripts\activate 
+
+Instalar dependencias (Usando requirements.txt):
+Bash
+
+pip install -r requirements.txt
+
+
+Crear la Base de Datos:
+
+python manage.py makemigrations api
+python manage.py migrate
+
+Crear Admin:
+
+python manage.py createsuperuser
+
+Poblar Datos (Recomendado para demo):
+Bash
+
+python manage.py populate_db
+
+Ejecutar:
+
+    python manage.py runserver
+
+    El backend estará en http://localhost:8000.
+
+2. Frontend 
+
+Navegar a la carpeta:
+
+cd mi-proyecto-tailwind
+
+Instalar dependencias:
+npm install
+
+
+Ejecutar:
+
+    npm run dev
+
+    El frontend estará en http://localhost:5173.
+
+Cuentas de Prueba (Post-Población)
+
+    Admin: La que creaste con createsuperuser.
+
+    Cliente: cliente / pass123
