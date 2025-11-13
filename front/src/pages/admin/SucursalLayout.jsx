@@ -70,7 +70,7 @@ export default function SucursalLayout() {
             to="pedidos" // Ruta anidada
             className={({ isActive }) => isActive ? activeClassName : inactiveClassName}
           >
-            Gestionar Pedidos
+            Gestionar Solicitudes
           </NavLink>
         </div>
       </nav>

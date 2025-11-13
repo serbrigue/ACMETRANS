@@ -1,144 +1,317 @@
-# api/management/commands/populate_db.py
+# acme-trans-backend/api/management/commands/populate_db.py
 
 import random
-from decimal import Decimal
-from faker import Faker
-from django.db import transaction
 from django.core.management.base import BaseCommand
 from django.contrib.auth.models import User
+from django.db import transaction
+from faker import Faker
+from decimal import Decimal
 
-# Importa todos tus modelos
+# Importamos TODOS los modelos
 from api.models import Sucursal, Cliente, Empleado, Camion, Pedido
 
+fake = Faker('es_ES') # Usar local de español para nombres y direcciones
+
+# --- Configuración de la Población ---
+NUM_CLIENTES = 5
+NUM_EMPLEADOS_POR_SUCURSAL = {
+    'Osorno': 15,
+    'Santiago': 25,
+    'Coquimbo': 10
+}
+# Total 29 camiones (según PDF)
+NUM_CAMIONES_POR_SUCURSAL = {
+    'Osorno': {'GC': 3, 'MC': 6},
+    'Santiago': {'GC': 5, 'MC': 8},
+    'Coquimbo': {'GC': 3, 'MC': 4}
+}
+NUM_PEDIDOS = 50
+PASSWORD_CLIENTE = "pass123"
+PASSWORD_EMPLEADO = "pass123"
+
 class Command(BaseCommand):
-    help = 'Popula la base de datos con datos de prueba realistas para ACME TRANS'
+    help = 'Pobla la base de datos con datos de prueba realistas de ACMETRANS'
 
-    def handle(self, *args, **options):
-        self.stdout.write(self.style.SUCCESS('Iniciando la población de la base de datos...'))
+    @transaction.atomic # Si algo falla, se revierte todo
+    def handle(self, *args, **kwargs):
+        self.stdout.write(self.style.SUCCESS('Iniciando población de la base de datos...'))
 
-        # Inicia Faker en español
-        fake = Faker('es_ES')
+        # 0. Limpiar datos antiguos (¡Cuidado en producción!)
+        self.stdout.write('Limpiando datos antiguos...')
+        User.objects.filter(is_superuser=False).delete()
+        Sucursal.objects.all().delete()
+        Camion.objects.all().delete()
+        Empleado.objects.all().delete()
+        Cliente.objects.all().delete()
+        Pedido.objects.all().delete()
 
-        try:
-            # Usa una transacción atómica para que todo se ejecute como una sola operación
-            with transaction.atomic():
-                # --- 1. LIMPIAR LA BASE DE DATOS ---
-                # Borra todo en orden inverso de dependencias para evitar errores
-                self.stdout.write('Limpiando la base de datos antigua...')
-                Pedido.objects.all().delete()
-                Camion.objects.all().delete()
-                Empleado.objects.all().delete()
-                Cliente.objects.all().delete()
-                Sucursal.objects.all().delete()
-                # Borra todos los usuarios excepto los superusuarios
-                User.objects.filter(is_superuser=False).delete()
+        # 1. Crear Sucursales
+        sucursales = self._create_sucursales()
+        
+        # 2. Crear Clientes
+        clientes = self._create_clientes()
+        
+        # 3. Crear Empleados (Conductores, Mecánicos, etc.)
+        empleados = self._create_empleados(sucursales)
+        
+        # 4. Crear Camiones y asignarles conductores
+        # (Se crean después de empleados para poder asignar conductores)
+        camiones = self._create_camiones(sucursales, empleados)
 
-                # --- 2. CREAR SUCURSALES ---
-                self.stdout.write('Creando Sucursales...')
-                s_osorno = Sucursal.objects.create(nombre="Osorno", ciudad="Osorno", direccion=fake.address())
-                s_santiago = Sucursal.objects.create(nombre="Santiago", ciudad="Santiago", direccion=fake.address())
-                s_coquimbo = Sucursal.objects.create(nombre="Coquimbo", ciudad="Coquimbo", direccion=fake.address())
-                sucursales = [s_osorno, s_santiago, s_coquimbo]
+        # 5. Crear Pedidos de ejemplo
+        self._create_pedidos(clientes, sucursales, camiones)
 
-                # --- 3. CREAR EMPLEADOS (Conductores, Mecánicos, Admins) ---
-                self.stdout.write('Creando Empleados...')
-                conductores = []
-                # Crear 15 conductores
-                for i in range(15):
-                    user = User.objects.create_user(
-                        username=f'conductor_{i+1}',
-                        password='pass123',
-                        first_name=fake.first_name(),
-                        last_name=fake.last_name(),
-                        is_staff=True
-                    )
-                    emp = Empleado.objects.create(
-                        user=user,
-                        cargo='CON',
-                        sucursal=random.choice(sucursales)
-                    )
-                    conductores.append(emp)
+        self.stdout.write(self.style.SUCCESS(f'\n¡Población completada con éxito!'))
+        self.stdout.write(self.style.WARNING(f'Usuario Cliente: cliente / {PASSWORD_CLIENTE}'))
+        self.stdout.write(self.style.WARNING(f'Usuarios Empleados: (ej: p.rojas) / {PASSWORD_EMPLEADO}'))
+
+    def _create_sucursales(self):
+        self.stdout.write('Creando sucursales...')
+        sucursales_data = [
+            {"nombre": "Osorno", "direccion": "Av. Los Héroes 123", "ciudad": "Osorno"},
+            {"nombre": "Santiago", "direccion": "Panamericana Norte 456", "ciudad": "Santiago"},
+            {"nombre": "Coquimbo", "direccion": "Ruta 5 Norte 789", "ciudad": "Coquimbo"},
+        ]
+        sucursales = {}
+        for data in sucursales_data:
+            suc = Sucursal.objects.create(**data)
+            sucursales[suc.nombre] = suc
+            self.stdout.write(f'  Creada sucursal: {suc.nombre}')
+        return sucursales
+
+    def _create_clientes(self):
+        self.stdout.write('Creando clientes de prueba...')
+        clientes = []
+        
+        # Cliente 1 (Fijo para pruebas)
+        user_cliente = User.objects.create_user(
+            username="cliente",
+            password=PASSWORD_CLIENTE,
+            first_name="Juan",
+            last_name="Pérez",
+            email="cliente@empresa.com",
+            is_staff=False
+        )
+        cliente = Cliente.objects.create(
+            user=user_cliente,
+            nombre_empresa="Empresa XYZ",
+            rut_empresa="76.123.456-K",
+            telefono="+56912345678"
+        )
+        clientes.append(cliente)
+
+        # Clientes aleatorios
+        for _ in range(NUM_CLIENTES - 1):
+            first_name = fake.first_name()
+            last_name = fake.last_name()
+            username = f"{first_name[0].lower()}{last_name.lower().split(' ')[0]}"
+            user = User.objects.create_user(
+                username=username,
+                password=PASSWORD_CLIENTE,
+                first_name=first_name,
+                last_name=last_name,
+                email=f"{username}@{fake.free_email_domain()}",
+                is_staff=False
+            )
+            cliente = Cliente.objects.create(
+                user=user,
+                nombre_empresa=fake.company(),
+                rut_empresa=f"{random.randint(70, 99)}.{random.randint(100, 999)}.{random.randint(100, 999)}-{random.randint(0, 9)}",
+                telefono=fake.phone_number()
+            )
+            clientes.append(cliente)
+        
+        self.stdout.write(f'  Creados {len(clientes)} clientes.')
+        return clientes
+
+    def _create_empleados(self, sucursales):
+        self.stdout.write('Creando empleados...')
+        empleados = {'CON': [], 'MEC': [], 'ADM': []}
+        
+        # Crear a Pedro Rojas (Jefe de Operaciones/Mecánico en Santiago)
+        user_pedro = User.objects.create_user(
+            username="p.rojas",
+            password=PASSWORD_EMPLEADO,
+            first_name="Pedro",
+            last_name="Rojas",
+            email="pedro.rojas@acmetrans.cl",
+            is_staff=True # Puede entrar al admin
+        )
+        pedro = Empleado.objects.create(
+            user=user_pedro,
+            cargo='MEC',
+            estado='DIS', 
+            sucursal=sucursales['Santiago']
+        )
+        empleados['MEC'].append(pedro)
+
+        # Crear empleados aleatorios por sucursal
+        for nombre_sucursal, num in NUM_EMPLEADOS_POR_SUCURSAL.items():
+            sucursal = sucursales[nombre_sucursal]
+            for i in range(num):
+                first_name = fake.first_name()
+                last_name = fake.last_name()
+                username = f"{first_name[0].lower()}.{last_name.lower().split(' ')[0]}{i}"
+                user = User.objects.create_user(
+                    username=username,
+                    password=PASSWORD_EMPLEADO,
+                    first_name=first_name,
+                    last_name=last_name,
+                    email=f"{username}@acmetrans.cl",
+                    is_staff=True # Todos los empleados son staff
+                )
                 
-                # Crear 6 mecánicos (2 por sucursal)
-                for i in range(6):
-                    user = User.objects.create_user(
-                        username=f'mecanico_{i+1}', password='pass123', 
-                        first_name=fake.first_name(), last_name=fake.last_name(), is_staff=True
-                    )
-                    Empleado.objects.create(user=user, cargo='MEC', sucursal=sucursales[i % 3])
-
-                # --- 4. CREAR CAMIONES (29 en total) ---
-                self.stdout.write('Creando Flota de Camiones...')
-                # Osorno: 3 GC, 6 MC
-                for _ in range(3): Camion.objects.create(matricula=fake.license_plate(), capacidad='GC', sucursal_base=s_osorno)
-                for _ in range(6): Camion.objects.create(matricula=fake.license_plate(), capacidad='MC', sucursal_base=s_osorno)
-                # Santiago: 5 GC, 8 MC
-                for _ in range(5): Camion.objects.create(matricula=fake.license_plate(), capacidad='GC', sucursal_base=s_santiago)
-                for _ in range(8): Camion.objects.create(matricula=fake.license_plate(), capacidad='MC', sucursal_base=s_santiago)
-                # Coquimbo: 3 GC, 4 MC
-                for _ in range(3): Camion.objects.create(matricula=fake.license_plate(), capacidad='GC', sucursal_base=s_coquimbo)
-                for _ in range(4): Camion.objects.create(matricula=fake.license_plate(), capacidad='MC', sucursal_base=s_coquimbo)
-
-                # Asignar conductores a los primeros 15 camiones
-                camiones_sin_conductor = list(Camion.objects.all())
-                for i in range(len(conductores)):
-                    camion = camiones_sin_conductor[i]
-                    camion.conductor_asignado = conductores[i]
-                    camion.save()
-
-                # --- 5. CREAR CLIENTES ---
-                self.stdout.write('Creando Clientes...')
-                clientes = []
-                # Crear un cliente de prueba fácil de recordar
-                user_cliente_test = User.objects.create_user(username='cliente', password='pass123', email='cliente@test.com')
-                clientes.append(Cliente.objects.create(user=user_cliente_test, nombre_empresa='Empresa de Prueba S.A.'))
+                # Definir cargos (mayoría conductores)
+                if i < (num * 0.6): # 60% Conductores
+                    cargo = 'CON'
+                elif i < (num * 0.8): # 20% Mecánicos
+                    cargo = 'MEC'
+                else: # 20% Administradores/Auxiliares
+                    cargo = random.choice(['ADM', 'AUX'])
                 
-                # Crear 20 clientes falsos
-                for i in range(20):
-                    user = User.objects.create_user(
-                        username=f'cliente_{fake.user_name()}{i}',
-                        password='pass123',
-                        email=fake.email()
-                    )
-                    cli = Cliente.objects.create(
-                        user=user,
-                        nombre_empresa=fake.company()
-                    )
-                    clientes.append(cli)
-
-                # --- 6. CREAR PEDIDOS ---
-                self.stdout.write('Creando Pedidos de prueba...')
-                tipos_carga = ['Alimentos', 'Retail', 'Agrícola', 'Electrónica', 'Materiales']
-                estados_posibles = ['SOLICITADO', 'COTIZADO', 'CONFIRMADO', 'EN_RUTA', 'COMPLETADO', 'CANCELADO']
+                empleado = Empleado.objects.create(
+                    user=user,
+                    cargo=cargo,
+                    estado='DIS', # Todos inician 'Disponibles'
+                    sucursal=sucursal
+                )
                 
-                for _ in range(50): # Crear 50 pedidos
-                    cliente = random.choice(clientes)
-                    sucursal_origen = random.choice(sucursales)
-                    estado = random.choice(estados_posibles)
+                if cargo == 'CON':
+                    empleados['CON'].append(empleado)
+                elif cargo == 'MEC':
+                    empleados['MEC'].append(empleado)
+                else:
+                    empleados['ADM'].append(empleado)
+
+        self.stdout.write(f'  Creados {len(empleados["CON"])} Conductores, {len(empleados["MEC"])} Mecánicos, y {len(empleados["ADM"])} Admin/Aux.')
+        return empleados
+
+
+    def _create_camiones(self, sucursales, empleados):
+        self.stdout.write('Creando flota de camiones...')
+        camiones = []
+        conductores_disponibles = list(empleados['CON']) 
+
+        for nombre_sucursal, capacidades in NUM_CAMIONES_POR_SUCURSAL.items():
+            sucursal = sucursales[nombre_sucursal]
+            
+            # Crear Camiones GC
+            for _ in range(capacidades['GC']):
+                camion = Camion.objects.create(
+                    matricula=fake.license_plate().replace(' ', ''),
+                    capacidad='GC',
+                    estado='DIS', 
+                    sucursal_base=sucursal,
+                    conductor_asignado=None 
+                )
+                camiones.append(camion)
+            
+            # Crear Camiones MC
+            for _ in range(capacidades['MC']):
+                camion = Camion.objects.create(
+                    matricula=fake.license_plate().replace(' ', ''),
+                    capacidad='MC',
+                    estado='DIS', 
+                    sucursal_base=sucursal,
+                    conductor_asignado=None
+                )
+                camiones.append(camion)
+        
+        # Asignar algunos conductores a camiones (solo los de la misma sucursal)
+        self.stdout.write('Asignando algunos conductores disponibles a camiones...')
+        camiones_sin_conductor = list(Camion.objects.filter(conductor_asignado__isnull=True))
+        
+        for cond in conductores_disponibles:
+            if not camiones_sin_conductor:
+                break 
+            
+            # Buscar un camión libre EN LA MISMA SUCURSAL del conductor
+            camion_para_asignar = next((c for c in camiones_sin_conductor if c.sucursal_base == cond.sucursal), None)
+            
+            if camion_para_asignar:
+                camion_para_asignar.conductor_asignado = cond
+                camion_para_asignar.save()
+                camiones_sin_conductor.remove(camion_para_asignar)
+
+        self.stdout.write(f'  Creados {len(camiones)} camiones.')
+        return camiones
+
+
+    def _create_pedidos(self, clientes, sucursales, camiones):
+        self.stdout.write('Creando pedidos de ejemplo...')
+        
+        tipos_carga_comunes = ["Alimentos Perecibles", "Retail", "Maquinaria Agrícola", "Carga Seca", "Materiales de Construcción"]
+        
+        for i in range(NUM_PEDIDOS):
+            sucursal_origen = random.choice(list(sucursales.values()))
+            destino_ciudad = random.choice(["Valparaíso", "Rancagua", "Talca", "Concepción", "Temuco", "Puerto Montt", "La Serena", "Antofagasta"])
+            
+            if i < NUM_PEDIDOS * 0.4:
+                estado_pedido = 'COMPLETADO'
+            elif i < NUM_PEDIDOS * 0.7:
+                estado_pedido = 'SOLICITADO'
+            elif i < NUM_PEDIDOS * 0.8:
+                estado_pedido = 'COTIZADO'
+            elif i < NUM_PEDIDOS * 0.9:
+                estado_pedido = 'EN_RUTA'
+            else:
+                estado_pedido = 'CONFIRMADO'
+
+            camion_asignado = None
+            precio = None
+            costo = None
+
+            if estado_pedido in ['CONFIRMADO', 'EN_RUTA', 'COMPLETADO']:
+                camion = Camion.objects.filter(
+                    sucursal_base=sucursal_origen, 
+                    estado='DIS', 
+                    conductor_asignado__isnull=False 
+                ).first()
+                
+                if camion:
+                    camion_asignado = camion
+                    precio = fake.pydecimal(left_digits=7, right_digits=0, positive=True, min_value=500000, max_value=3000000)
+                    costo = precio * Decimal(random.uniform(0.6, 0.8))
                     
-                    p = Pedido.objects.create(
-                        cliente=cliente,
-                        sucursal_origen=sucursal_origen,
-                        destino=fake.city(),
-                        tipo_carga=random.choice(tipos_carga),
-                        detalles_carga=fake.sentence(nb_words=10),
-                        fecha_deseada=fake.date_between(start_date='today', end_date='+60d'),
-                        estado=estado
-                    )
-                    
-                    # Si el pedido está avanzado, añadirle más datos
-                    if estado not in ['SOLICITADO', 'CANCELADO']:
-                        p.precio_cotizado = Decimal(random.randint(50000, 1500000))
-                        p.costo_estimado = p.precio_cotizado * Decimal(random.uniform(0.6, 0.8))
+                    if estado_pedido in ['CONFIRMADO', 'EN_RUTA']:
+                        camion.estado = 'RUT' 
+                        camion.save()
                         
-                        # Asignar un camión de la misma sucursal de origen
-                        camion_disponible = Camion.objects.filter(sucursal_base=sucursal_origen).order_by('?').first()
-                        if camion_disponible:
-                            p.camion_asignado = camion_disponible
-                        p.save()
-
-            self.stdout.write(self.style.SUCCESS('¡Población de la base de datos completada con éxito!'))
-
-        except Exception as e:
-            self.stdout.write(self.style.ERROR(f'Error durante la población: {e}'))
-            raise
+                        if camion.conductor_asignado:
+                            conductor = camion.conductor_asignado
+                            conductor.estado = 'RUT' 
+                            conductor.save()
+            
+            # --- ¡CORRECCIÓN APLICADA AQUÍ! ---
+            # left_digits=4 cambiado a left_digits=5
+            peso = fake.pydecimal(
+                left_digits=5, # Permitir hasta 5 dígitos (ej: 25000)
+                right_digits=2, 
+                positive=True, 
+                min_value=100, 
+                max_value=25000
+            )
+            volumen = fake.pydecimal(
+                left_digits=2, 
+                right_digits=2, 
+                positive=True, 
+                min_value=1, 
+                max_value=90
+            )
+            
+            Pedido.objects.create(
+                cliente=random.choice(clientes),
+                sucursal_origen=sucursal_origen,
+                destino=f"{fake.street_address()}, {destino_ciudad}",
+                tipo_carga=random.choice(tipos_carga_comunes),
+                peso_kg=peso,
+                volumen_m3=volumen,
+                detalles_carga=f"Carga {fake.word()}. {random.randint(1, 20)} pallets.",
+                fecha_deseada=fake.future_date(end_date="+30d"),
+                estado=estado_pedido,
+                costo_estimado=costo,
+                precio_cotizado=precio,
+                camion_asignado=camion_asignado
+            )
+        
+        self.stdout.write(f'  Creados {NUM_PEDIDOS} pedidos.')

@@ -12,9 +12,11 @@ from .views import (
     PedidoAdminListView,
     PedidoAdminDetailView,
     SucursalListView,
-    SucursalDetailView, # Nueva
+    SucursalDetailView, 
     ConductorListView,
-    CamionDropdownListView
+    CamionDropdownListView,
+    # --- ¡NUEVA VISTA AÑADIDA! ---
+    SucursalDashboardDataView  
 )
 from rest_framework_simplejwt.views import TokenRefreshView
 
@@ -26,6 +28,9 @@ urlpatterns = [
 
     # --- RUTAS DE CLIENTE ---
     path('mis-pedidos/', MyPedidoListView.as_view(), name='mis-pedidos'),
+
+    # --- ¡NUEVA RUTA DEL DASHBOARD AÑADIDA! ---
+    path('admin/sucursales/<int:pk>/dashboard/', SucursalDashboardDataView.as_view(), name='admin-sucursal-dashboard'),
 
     # --- RUTAS DE ADMIN (CRUD) ---
     path('admin/camiones/', CamionListCreateView.as_view(), name='admin-camiones-list'),
@@ -39,7 +44,7 @@ urlpatterns = [
 
     # --- RUTAS PARA DROPDOWNS Y DATOS ---
     path('data/sucursales/', SucursalListView.as_view(), name='data-sucursales'),
-    path('data/sucursales/<int:pk>/', SucursalDetailView.as_view(), name='data-sucursal-detail'), # Nueva
+    path('data/sucursales/<int:pk>/', SucursalDetailView.as_view(), name='data-sucursal-detail'), 
     path('data/conductores/', ConductorListView.as_view(), name='data-conductores'),
     path('data/camiones/', CamionDropdownListView.as_view(), name='data-camiones'),
 ]
